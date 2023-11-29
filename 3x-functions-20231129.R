@@ -253,6 +253,7 @@ validate <- function(.data,                                     # Data
                      deciles = TRUE,                            # Should deciles be added in calibration plot
                      # Plot details
                      unit = "probability",                      # Unit of prediction for axes of plot
+                     smooth_colour = "darkred",                 # Colour of smoother
                      histogram_label = NULL                     # Location of event / no-event label in probabilities histogram
 ){
     ## Prepare data
@@ -386,7 +387,7 @@ validate <- function(.data,                                     # Data
             # Geometries
             geom_abline(colour = "black", linewidth = 2, alpha = 0.33) +
             geom_point(alpha = 0.25) +
-            geom_smooth(colour = "darkred", fill = "darkred", method = "loess", formula = y ~ x)
+            geom_smooth(colour = smooth_colour, fill = smooth_colour, method = "loess", formula = y ~ x)
         
         # Add deciles
         if(deciles) plot_cal <- plot_cal + geom_point(inherit.aes = FALSE, data = dat_dec, aes(x = pred_prop, y = out_prop), shape = 0)
