@@ -400,8 +400,7 @@ validate <- function(.data,                                     # Data
             # Transformations
             coord_cartesian(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
             # Aesthetics
-            theme(panel.background = element_blank(),
-                  plot.background = element_blank(),
+            theme(plot.background = element_blank(),
                   panel.grid = element_blank(),
                   axis.line = element_blank()) +
             panel_border(colour = "black", size = 1)
@@ -426,8 +425,7 @@ validate <- function(.data,                                     # Data
                 # Transformations
                 coord_cartesian(xlim = c(xmin, xmax), ylim = c(-max(table(round(dat[["prd"]], 3))), max(table(round(dat[["prd"]], 3))))) +
                 # Aesthetics
-                theme(panel.background = element_blank(),
-                      plot.background = element_blank(),
+                theme(plot.background = element_blank(),
                       panel.grid = element_blank(),
                       axis.line = element_blank(),
                       axis.ticks.y = element_blank(),
