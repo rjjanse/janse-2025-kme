@@ -181,7 +181,7 @@ develop <- function(df, imp, formula, model){
 # Function for model development
 dev <- function(df, formula, model){
     # Fit model for each imputation and add together the final models
-    mod <- do.call("rbind", lapply(1:20, \(x) develop(df, x, formula, model)))
+    mod <- do.call("rbind", lapply(unique(df[[".imp"]]), \(x) develop(df, x, formula, model)))
     
     # Get final model fit by taking means of each model
     model_vars <- summary(mod) %>% 
