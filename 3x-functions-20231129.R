@@ -251,8 +251,9 @@ validate <- function(.data,                                     # Data
                      print_stratified = FALSE,                  # Print stratified C-statistics (only relevant for survival model)
                      plot = TRUE,                               # Should a calibration plot be made
                      deciles = TRUE,                            # Should deciles be added in calibration plot
-                     # Plot details
+                     # Calibration plot details
                      unit = "probability",                      # Unit of prediction for axes of plot
+                     annotation = c("", 0, 1),                  # Annotation to add to plot as c("annotation", x, y)
                      smooth_colour = "darkred",                 # Colour of smoother
                      histogram_label = NULL                     # Location of event / no-event label in probabilities histogram
 ){
@@ -399,11 +400,13 @@ validate <- function(.data,                                     # Data
             scale_x_continuous(breaks = brks, name = xlab) +
             # Transformations
             coord_cartesian(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
+            # Labels
+            annotate("text", x = annotation[[2]], y = annotation[[3]], label = annotation[[1]]) +
             # Aesthetics
             theme(panel.background = element_blank(),
                   panel.grid = element_blank(),
                   axis.line = element_blank()) +
-            panel_border(colour = "black", size = 1)
+            panel_border(colour = "black", size = 1) 
         
         # Create probability histogram for non-continuous models
         if(!(model %in% c("poisson", "linear"))){
