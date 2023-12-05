@@ -1,17 +1,3 @@
-# Load packages
-library("dplyr",           # Data manipulation
-        "magrittr",        # Efficient piping
-        "broom",           # Converting statistical objects
-        "stringr",         # Working with strings
-        "rms",             # Checking assumptions
-        "splines",         # Splines
-        "cowplot",         # Data viz. add-ons
-        "survival",        # Modelling
-        "ggplot2",         # Data visualization
-        "intsurv"          # Package for calculating C-statistic
-)
-
-
 # Create function
 reestimate <- function(data,                     # Data for development and internal validation
                        imputed = TRUE,           # Is the development data imputed? If TRUE, a column .imp should be present indicating the imputation
