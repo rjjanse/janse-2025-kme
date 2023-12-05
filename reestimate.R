@@ -131,7 +131,7 @@ reestimate <- function(data,                     # Data for development and inte
     # Get calibration plot
     plot_cal <- quiet(pred(filter(dat_tmp, .imp %in% 1:5), "fine-gray", event, tte, lpsamp = lpsamp(dat_tmp)) %>%
                           # Validate
-                          validate(observed, pred, lp, "fine-gray", time, histogram_label = 0.3, deciles = TRUE))
+                          validate(observed, pred, lp, "fine-gray", time, histogram_label = event_label, deciles = TRUE))
     
     # Add annotation to calibration plot
     plot_cal <- plot_cal + annotate("text", x = 0.15, y = 0.925, label = annotation, colour = "black", fontface = "bold", size = 10)
