@@ -401,7 +401,8 @@ validate <- function(.data,                                     # Data
             # Transformations
             coord_cartesian(xlim = c(xmin, xmax), ylim = c(ymin, ymax)) +
             # Labels
-            annotate("text", x = annotation[[2]], y = annotation[[3]], label = annotation[[1]], fontface = "bold", size = 10) +
+            annotate("text", x = as.numeric(annotation[[2]]), y = as.numeric(annotation[[3]]), 
+                     label = annotation[[1]], fontface = "bold", size = 10) +
             # Aesthetics
             theme(panel.background = element_blank(),
                   panel.grid = element_blank(),
