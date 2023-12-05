@@ -126,7 +126,7 @@ reestimate <- function(data,                     # Data for development and inte
     invisible(lapply(c("age", "cardiovasc", "dm", "mal", "egfr", "bmi"), \(x){quick_ggsave(paste0(save_name_prefix, "ph_", x, ".png"), ph_plot(x))}))
     
     # Develop model
-    model_vars <- dev(dat_tmp, "Surv(tte, event) ~ age + as.factor(cardiovasc) + as.factor(dm) + as.factor(mal) + egfr + bmi", "fine-gray")
+    model_vars <<- dev(dat_tmp, "Surv(tte, event) ~ age + as.factor(cardiovasc) + as.factor(dm) + as.factor(mal) + egfr + bmi", "fine-gray")
     
     # Get calibration plot
     plot_cal <- quiet(pred(filter(dat_tmp, .imp %in% 1:5), "fine-gray", event, tte, lpsamp = lpsamp(dat_tmp)) %>%
