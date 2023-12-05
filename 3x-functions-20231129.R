@@ -451,7 +451,7 @@ validate <- function(.data,                                     # Data
                                                                        data = dat)[["coefficients"]][["lps"]], 3), nsmall = 3)
     
     # Cox model
-    if(model == "cox") cslope <- format(round(coxph(Surv(tim, obs) ~ lps, data = dat)[["coefficients"]][["lps"]], 3), nsmall = 3)
+    if(model == "cox") cslope <- format(round(coxph(Surv(tim, obs_ncr) ~ lps, data = dat)[["coefficients"]][["lps"]], 3), nsmall = 3)
     
     # Fine-Gray model
     if(model == "fine-gray") cslope <- format(round(coxph(Surv(fgstart, fgstop, fgstatus) ~ lps, weight = fgwt, 
