@@ -34,8 +34,8 @@ lin_check <- function(var, annotation, model){
             as.data.frame() 
     }
     
-    # Cox model
-    if(model == "cox"){
+    # Cox and AFT model
+    if(model %in% c("cox", "aft")){
         # Get data
         dat_plot <- do.call("cbind", quiet(rcspline.plot(x = filter(dat_dev, .imp == 1)[[var]], y = filter(dat_dev, .imp == 1)[["tte"]], noprint = TRUE,
                                                          event = ev == 1, model = "cox", statloc = "none"))) %>%
@@ -116,7 +116,7 @@ ph_plot <- function(var, ylabel, annotation){
 }
 
 # Function to create model per imputation
-develop <- function(df, imp, formula, model){
+develop <- function(df, imp, formula, model, aft_dist){
     # Data
     dat_mod_tmp <- filter(df, .imp == imp) 
     
@@ -136,6 +136,9 @@ develop <- function(df, imp, formula, model){
     # Cox model fit
     if(model == "cox") fit <- coxph(as.formula(formula), x = TRUE, data = dat_mod_tmp)
     
+    # Accelerated failure time model fit
+    if(model == "aft") fit <- survreg(as.formula(formula), data = dat_mod_tmp, dist = aft_dist)
+
     # Logistic model fit
     if(model == "logistic") fit <- glm(as.formula(formula), family = "binomial", data = dat_mod_tmp)
     
@@ -162,8 +165,8 @@ develop <- function(df, imp, formula, model){
             bind_cols(as.data.frame(bh), .)
     }
     
-    # If logistic model, get intercept
-    if(model == "logistic"){
+    # If logistic or accelerated failure time model, get intercept
+    if(model %in% c("logistic", "aft")){
         # Get coefficients
         coeffs <- fit[["coefficients"]] %>%
             # Change to data frame
@@ -179,9 +182,9 @@ develop <- function(df, imp, formula, model){
 }
 
 # Function for model development
-dev <- function(df, formula, model){
+dev <- function(df, formula, model, aft_dist = NULL){
     # Fit model for each imputation and add together the final models
-    mod <- do.call("rbind", lapply(unique(df[[".imp"]]), \(x) develop(df, x, formula, model)))
+    mod <- do.call("rbind", lapply(unique(df[[".imp"]]), \(x) develop(df, x, formula, model, aft_dist)))
     
     # Get final model fit by taking means of each model
     model_vars <- summary(mod) %>% 
@@ -234,7 +237,7 @@ cstat <- function(df, model){
     }
     
     # For survival models (Harrell's C-statistic)
-    if(model %in% c("cox", "fine-gray")) cstatistic <- cIndex(dat_tmp[["tim"]], dat_tmp[["obs_ncr"]], dat_tmp[["prd"]])[["index"]]
+    if(model %in% c("cox", "aft", "fine-gray")) cstatistic <- cIndex(dat_tmp[["tim"]], dat_tmp[["obs_ncr"]], dat_tmp[["prd"]])[["index"]]
     
     # Return C-statistic
     return(cstatistic)
@@ -246,7 +249,8 @@ validate <- function(.data,                                     # Data
                      predicted,                                 # Predicted outcome
                      lp,                                        # Linear predictor
                      model,                                     # Regression model used to create the prediction model,
-                     time = NULL,                               # Time variable (only relevant for Cox/Fine-Gray)
+                     time = NULL,                               # Time variable (only relevant for Cox/AFT/Fine-Gray)
+                     aft_dist = "lognormal",                    # Distribution used for the AFT model
                      # Output
                      print_stratified = FALSE,                  # Print stratified C-statistics (only relevant for survival model)
                      plot = TRUE,                               # Should a calibration plot be made
@@ -365,19 +369,19 @@ validate <- function(.data,                                     # Data
         
         ## Define characteristics of the plot
         # Upper limits of axes
-        if(model %in% c("poisson", "linear")) xmax <- ymax <- max(obs) else xmax <- ymax <- 1
+        if(model %in% c("poisson", "linear", "aft")) xmax <- ymax <- max(obs) else xmax <- ymax <- 1
         
         # Lower limits of axes
-        if(model %in% c("poisson", "linear")) xmin <- ymin <- pmin(0, min(obs)) else xmin <- ymin <- 0
+        if(model %in% c("poisson", "linear", "aft")) xmin <- ymin <- pmin(0, min(obs)) else xmin <- ymin <- 0
         
         # Breaks of axes
         brks <- seq(xmin, xmax, (xmax - xmin) / 10)
         
         # Labels of x-axis
-        if(model %in% c("poisson", "linear")) xlab <- paste0("Predicted ", unit) else xlab <- "Predicted probability"
+        if(model %in% c("poisson", "linear", "aft")) xlab <- paste0("Predicted ", unit) else xlab <- "Predicted probability"
         
         # Label of y-axis
-        if(model %in% c("poisson", "linear")) ylab <- paste0("Observed ", unit) else ylab <- "Observed probability"
+        if(model %in% c("poisson", "linear", "aft")) ylab <- paste0("Observed ", unit) else ylab <- "Observed probability"
         
         # Determine location of event label in probabilities histogram automatically if not specified, based on least predicted probability
         if(is.null(histogram_label)) histogram_label <- as.numeric(names(sort(table(round(dat[["prd"]], 3))))[[1]])
@@ -410,7 +414,7 @@ validate <- function(.data,                                     # Data
             panel_border(colour = "black", size = 1) 
         
         # Create probability histogram for non-continuous models
-        if(!(model %in% c("poisson", "linear"))){
+        if(!(model %in% c("poisson", "linear", "aft"))){
             # Turn off x-axis for calibration plot
             plot_cal <- plot_cal + theme(axis.ticks.x = element_blank(),
                                          axis.text.x = element_blank(),
@@ -443,16 +447,19 @@ validate <- function(.data,                                     # Data
     }
     
     ## Calculate performance measures
-    # Get proportion of outcome
-    prop_out <- prop.table(table(dat[["obs"]]))[["1"]]
+    # Get proportion of outcome for non-continuous models
+    if(!(model %in% c("linear", "poisson", "aft"))) prop_out <- prop.table(table(dat[["obs"]]))[["1"]]
+    
+    # Get mean of outcome for continous models
+    else prop_out <- mean(obs)
     
     # Calibration-in-the-large
     citl <- format(round(prop_out / mean(prd), 3), nsmall = 3)
     
     ## Calculate calibration slope
     # Generalized linear model
-    if(!(model %in% c("cox", "fine-gray"))) cslope <- format(round(glm(y ~ lps, family = ifelse(model == "logistic", "binomial", model), 
-                                                                       data = dat)[["coefficients"]][["lps"]], 3), nsmall = 3)
+    if(!(model %in% c("cox", "fine-gray", "aft"))) cslope <- format(round(glm(y ~ lps, family = ifelse(model == "logistic", "binomial", model), 
+                                                                            data = dat)[["coefficients"]][["lps"]], 3), nsmall = 3)
     
     # Cox model
     if(model == "cox") cslope <- format(round(coxph(Surv(tim, obs) ~ lps, data = dat)[["coefficients"]][["lps"]], 3), nsmall = 3)
@@ -462,6 +469,9 @@ validate <- function(.data,                                     # Data
                                                           data = finegray(Surv(tim, as.factor(obs)) ~ ., data = dat))[["coefficients"]][["lps"]], 
                                                     3), nsmall = 3)
     
+    # AFT model
+    if(model == "aft") cslope <- format(round(survreg(Surv(tim, obs) ~ lps, data = dat, dist = aft_dist)[["coefficients"]][["lps"]], 3), nsmall = 3)
+
     # C-statistic
     if(!(model %in% c("linear", "poisson"))){
         # Calculate C statistic
@@ -677,7 +687,7 @@ lpsamp <- function(df){
 }
 
 # Create function to get predicted risks
-pred <- function(df, model, observed, time = NULL, lpsamp = NULL){
+pred <- function(df, model, observed, time = NULL, lpsamp = NULL, aft_dist = NULL){
     # Get model information
     model_info <- model_inf()
     
@@ -747,7 +757,7 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL){
             # Time (for survival models)
             time = tim)
     
-    # For survival models
+    # For Cox/FIne-Gray models
     if(model %in% c("cox", "fine-gray")){
         ## Calculate individual risks
         # The predicted risks from predict.coxph() from {survival} do not correspond to our calculated probabilities, because they are
@@ -762,6 +772,14 @@ pred <- function(df, model, observed, time = NULL, lpsamp = NULL){
                 prob = 1 - exp(-as.numeric(model_vars[["bh"]])) ^ exp(lp)) %>%
             # Ungroup again
             ungroup()
+    }
+    
+    # For AFT models (currently only for lognormal and Weibull distributions)
+    if(model == "aft"){
+        # Calculate individual times
+        dat_tmp <- dat_tmp %>%
+            # Calculate expected time to failure
+            mutate(prob = survreg.distributions[[aft_dist]][["itrans"]](as.numeric(model_vars[["a"]]) + lp))
     }
     
     # For logistic models
