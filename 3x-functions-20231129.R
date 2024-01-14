@@ -237,7 +237,10 @@ cstat <- function(df, model){
     }
     
     # For survival models (Harrell's C-statistic)
-    if(model %in% c("cox", "aft", "fine-gray")) cstatistic <- cIndex(dat_tmp[["tim"]], dat_tmp[["obs_ncr"]], dat_tmp[["prd"]])[["index"]]
+    if(model %in% c("cox", "fine-gray")) cstatistic <- cIndex(dat_tmp[["tim"]], dat_tmp[["obs_ncr"]], dat_tmp[["prd"]])[["index"]]
+    
+    # For AFT models, use aft_status obs
+    if(model == "aft") cstatistic <- cIndex(dat_tmp[["tim"]], dat_tmp[["aft_status"]], dat_tmp[["prd"]])[["index"]]
     
     # Return C-statistic
     return(cstatistic)
@@ -280,12 +283,25 @@ validate <- function(.data,                                     # Data
     # Time
     if(!(deparse(substitute(time)) == "NULL")) tim <- .data[[deparse(substitute(time))]] else tim <- NA
     
+    # If model is AFT, observed should be time to event and status should be stored elsewhere
+    if(model == "aft") {
+        # Store status elsewhere
+        aft_status <- obs
+        
+        # Store EFT
+        obs <- obs_ncr <- tim
+    }
+    
+    # Else empty aft_status variable
+    else aft_status <- NA
+    
     # Create data to work with
     dat <- tibble(obs = obs,
                   obs_ncr = obs_ncr,
                   lps = lps,
                   prd = prd, 
-                  tim = tim)
+                  tim = tim,
+                  aft_status = aft_status)
     
     # Get total number of individuals
     n <- nrow(dat)
@@ -304,11 +320,11 @@ validate <- function(.data,                                     # Data
                 group_by(dec) %>%
                 # Get mean outcome and probability
                 mutate(# Outcome
-                    out_prop = mean(obs_ncr),
-                    # Predicted
-                    pred_prop = mean(prd),
-                    # Check number of individuals
-                    nmax = max(row_number())) %>%
+                       out_prop = mean(obs_ncr),
+                       # Predicted
+                       pred_prop = mean(prd),
+                       # Check number of individuals
+                       nmax = max(row_number())) %>%
                 # Keep one row per decile
                 slice(1L) %>%
                 # Ungroup again
@@ -394,6 +410,21 @@ validate <- function(.data,                                     # Data
             geom_point(alpha = 0.25) +
             geom_smooth(colour = smooth_colour, fill = smooth_colour, method = "loess", formula = y ~ x)
         
+        # If AFT model, overwrite base scatter plot to add colouring for different statuses
+        if(model == "aft"){
+            # Create base scatter plot
+            plot_cal <- ggplot(dat, aes(x = prd, y = y)) +
+                # Geometries
+                geom_abline(colour = "black", linewidth = 2, alpha = 0.33) +
+                geom_point(alpha = 0.25, mapping = aes(colour = factor(aft_status, levels = c(0, 1), labels = c("No-event", "Event")))) +
+                geom_smooth(colour = smooth_colour, fill = smooth_colour, method = "loess", formula = y ~ x) + 
+                # Scaling
+                scale_colour_manual(values = c("darkorange", "darkred")) +
+                # Aesthetics
+                theme(legend.position = "bottom",
+                      legend.title = element_blank())
+        }
+        
         # Add deciles
         if(deciles) plot_cal <- plot_cal + geom_point(inherit.aes = FALSE, data = dat_dec, aes(x = pred_prop, y = out_prop), shape = 0)
         
@@ -470,7 +501,7 @@ validate <- function(.data,                                     # Data
                                                     3), nsmall = 3)
     
     # AFT model
-    if(model == "aft") cslope <- format(round(survreg(Surv(tim, obs) ~ lps, data = dat, dist = aft_dist)[["coefficients"]][["lps"]], 3), nsmall = 3)
+    if(model == "aft") cslope <- format(round(survreg(Surv(tim, aft_status) ~ lps, data = dat, dist = aft_dist)[["coefficients"]][["lps"]], 3), nsmall = 3)
 
     # C-statistic
     if(!(model %in% c("linear", "poisson"))){
