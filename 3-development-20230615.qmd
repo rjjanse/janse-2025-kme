@@ -1,0 +1,687 @@
+---
+title: "Prediction models for hospitalization in CKD"
+author: "Roemer J. Janse"
+date: "`r Sys.Date()`"
+execute:
+    echo: false
+format: docx
+---
+
+# 0. Set up
+```{r}
+# Load packages
+pacman::p_load("dplyr",           # Data manipulation
+               "magrittr",        # Efficient piping
+               "broom",           # Converting statistical objects
+               "stringr",         # Working with strings
+               "rms",             # Checking assumptions
+               "splines",         # Splines
+               "cowplot",         # Data viz. add-ons
+               "survival",        # Modelling
+               "knitr",           # RMarkdown implementations
+               "ggplot2",         # Data visualization
+               "tableone",        # Creating table one
+               "intsurv"          # Package for calculating C-statistic
+)
+
+# Clean Global Environment
+rm(list = ls())
+
+# Path based on directionary
+if(grepl("rjjanse.LUMCNET", getwd())){
+    # Set path
+    path <- "C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/"
+} else {
+    # Set path
+    path <- "C:/Users/rjjan/OneDrive/Bureaublad/"
+}
+
+## Load data
+# Load development data
+load(paste0(path, "codes/dataframes/dat_necosad_hd_hosp.Rdata")) 
+
+# Load validation data
+load(paste0(path, "codes/dataframes/dat_necosad_pd_hosp.Rdata"))
+
+# Load validation data
+load(paste0(path, "codes/dataframes/dat_equal_hosp.Rdata"))
+
+## Prepare data
+# Prepare development data
+dat_dev <- dat_necosad_hd_hosp %>%
+    # Keep only first visit
+    filter(visit == 1) %>%
+    # Keep only individuals with known outcome
+    filter(missing_hosp == 0) %>% # Drops 0 people
+    # Keep only relevant variables
+    select(.imp, studynr, age, dm, hf, cad, mal, pvd, ap, cvd, mi, baseline_lvh, lung, egfr, bmi, event, tte, karnof) %>%
+    # Create cardiovascular disease
+    rename(cardiovasc = cvd)
+
+# Number of individuals in development data
+print(paste0("Number of individuals in development data: ", n_distinct(dat_dev[["studynr"]])))
+
+# Prepare NECOSAD PD validation data
+dat_necosad_pd <- select(dat_necosad_pd_hosp, .imp, studynr, visit, cad, dm, hf, mal, cvd, lung, tte, event, 
+                         missing_hosp, age, female, egfr, bmi, karnof) %>%
+    # Rename variables
+    rename(cardiovasc = cvd) %>%
+    # Keep only first visit
+    filter(visit == 1) %>%
+    # Only known outcome
+    filter(missing_hosp == 0) 
+
+# Number of individuals in NECOSAD PD data
+print(paste0("Number of individuals in NECOSAD PD data: ", n_distinct(dat_necosad_pd[["studynr"]])))
+
+# Prepare EQUAL validation data
+dat_equal <- select(dat_equal_hosp, .imp, studynr, visit, cad, dm, hf, mal, hypert, cvd, pvd, mi, ap, 
+                    lvh, af, lung, tte, event, missing_hosp, age, female, egfr, bmi) %>%
+    # Create new variables
+    mutate(cardiovasc = pmax(cad, hf, cvd, pvd, mi, ap, lvh, af, na.rm = TRUE)) %>%
+    # Keep only first visit
+    filter(visit == 0) %>%
+    # Only known outcome
+    filter(missing_hosp == 0)
+
+# Number of individuals in EQUAL data
+print(paste0("Number of individuals in EQUAL data: ", n_distinct(dat_equal[["studynr"]])))
+
+# Load functions
+source("https://raw.githubusercontent.com/rjjanse/hosps/main/3x-functions-20231129.R")
+
+```
+
+# 1. Baseline characteristics
+```{r}
+## Load unimputed data
+# NECOSAD HD
+load(paste0(getwd(), "/dataframes/dat_necosad_hd_imp_hosp.Rdata"))
+
+# NECOSAD PD
+load(paste0(getwd(), "/dataframes/dat_necosad_pd_imp_hosp.Rdata"))
+
+# EQUAL
+load(paste0(getwd(), "/dataframes/dat_equal_imp_hosp.Rdata"))
+
+
+## Get unimputed data
+# NECOSAD HD
+dat_unimputed_necosad_hd <- mice::complete(dat_necosad_hd_imp_hosp, action = 0) %>%
+    # Keep only baseline visit
+    filter(visit == 1) %>%
+    # Keep only individuals with known outcome
+    filter(missing_hosp == 0) %>% # Drops 0 people
+    # Keep only relevant variables
+    select(studynr, age, dm, hf, cad, mal, pvd, ap, cvd, mi, baseline_lvh, lung, egfr, bmi, female) %>%
+    # Create cardiovascular disease
+    rename(cardiovasc = cvd) %>%
+    # Add source
+    mutate(src = "nec_hd")
+
+# NECOSAD PD
+dat_unimputed_necosad_pd <- mice::complete(dat_necosad_pd_imp_hosp, action = 0) %>%
+    # Keep only baseline visit
+    filter(visit == 1) %>%
+    # Keep only individuals with known outcome
+    filter(missing_hosp == 0) %>% # Drops 0 people
+    # Keep only relevant variables
+    select(studynr, age, dm, hf, cad, mal, pvd, ap, cvd, mi, baseline_lvh, lung, egfr, bmi, female) %>%
+    # Create cardiovascular disease
+    rename(cardiovasc = cvd) %>%
+    # Add source
+    mutate(src = "nec_pd")
+
+# EQUAL
+dat_unimputed_equal <- mice::complete(dat_equal_imp_hosp, action = 0) %>%
+    # Keep only baseline visit
+    filter(visit == 0) %>% 
+    # Keep only individuals with known outcome
+    filter(missing_hosp == 0) %>%
+    # Keep only relevant variables
+    select(studynr, cad, dm, hf, mal, cvd, pvd, mi, ap, lvh, af, lung, age, female, egfr, bmi) %>%
+    # Create new variables
+    mutate(cardiovasc = pmax(cad, hf, cvd, pvd, mi, ap, lvh, af, na.rm = TRUE)) %>%
+    # Add source
+    mutate(src = "equal")
+
+# Prepare data for table
+dat_tab <- bind_rows(dat_unimputed_necosad_hd, dat_unimputed_necosad_pd, dat_unimputed_equal)
+
+# Create table
+dat_tab %>%
+    # Create table frame
+    # Note that we get IQR here for CCI but we need range as this is what the paper uses
+    CreateTableOne(vars = c("age", "female", "cardiovasc", "dm", "mal", "egfr", "bmi"), strata = "src",
+                   factorVars = c("female", "cardiovasc",  "dm", "mal")) %>%
+    # Print table one
+    print(printToggle = FALSE, nonnormal = c("egfr", "bmi")) %>%
+    # Change to matrix
+    as.matrix() %>%
+    # Keep only columns of interest
+    extract(, c(2, 3, 1)) %>%
+    # Change column names
+    set_colnames(c("NECOSAD HD", "NECOSAD PD", "EQUAL")) %>%
+    # Change to data frame
+    as.data.frame() %>%
+    # Kable table
+    kable()
+
+```
+
+# 2. Assumptions
+## 2.1. Collinearity of predictors
+```{r}
+# Create correlation plot of predictors
+cor(filter(dat_dev, .imp == 1)[, c("age", "cardiovasc", "dm", "mal", "egfr", "bmi")], method = "spearman") %>%
+    # Round correlations
+    round(3) %>%
+    # Kable table
+    kable()
+
+```
+
+## 2.1. Linearity of predictors with outcome
+### 2.1.1. Fine-Gray model
+```{r include=FALSE}
+# Age
+quick_ggsave("lin_fg_age.png", lin_check("age", annotation = c("A", 28, 2.7), model = "fine-gray"))
+
+# eGFR
+quick_ggsave("lin_fg_egfr.png", lin_check("egfr", annotation = c("B", 3, 2.5), model = "fine-gray"))
+
+# BMI
+quick_ggsave("lin_fg_bmi.png", lin_check("bmi", annotation = c("C", 18, 2), model = "fine-gray"))
+
+```
+
+### 2.1.2. Cox model
+```{r include=FALSE}
+# Age
+quick_ggsave("lin_cox_age.png", lin_check("age", annotation = c("A", 28, 2.6), model = "cox"))
+
+# eGFR
+quick_ggsave("lin_cox_egfr.png", lin_check("egfr", annotation = c("B", 3, 2.4), model = "cox"))
+
+# BMI
+quick_ggsave("lin_cox_mi.png", lin_check("bmi", annotation = c("C", 18, 1.5), model = "cox"))
+
+```
+
+### 2.1.3. Logistic model
+```{r include=FALSE}
+# Age
+quick_ggsave("lin_log_age.png", lin_check("age", annotation = c("A", 28, 1.5), model = "logistic"))
+
+# eGFR
+quick_ggsave("lin_log_egfr.png", lin_check("egfr", annotation = c("B", 3, 2.1), model = "logistic"))
+
+# BMI
+quick_ggsave("lin_log_bmi.png", lin_check("bmi", annotation = c("C", 18, 2.4), model = "logistic"))
+
+```
+
+## 2.2. Proportional hazards
+### 2.2.1. Fine-Gray model
+```{r}
+# Fit full model
+fit <- coxph(Surv(fgstart, fgstop, fgstatus) ~ age + as.factor(cardiovasc) + as.factor(dm) + as.factor(mal) + as.factor(lung) + egfr + bmi, weight = fgwt,
+             data = finegray(Surv(tte, event) ~ ., data = filter(dat_dev, .imp == 1)))
+
+# Age
+quick_ggsave("ph_fg_age.png", ph_plot("age", "age", c("A", 10, 0.2)))
+
+# Cardiovascular disease
+quick_ggsave("ph_fg_cvd.png", ph_plot("cardiovasc", "cardiovascular disease", c("B", 10, 5.5)))
+
+# Diabetes
+quick_ggsave("ph_fg_dm.png", ph_plot("dm", "diabetes mellitus", c("C", 10, 9)))
+
+# Malignancy
+quick_ggsave("ph_fg_mal.png", ph_plot("mal", "malignancy", c("D", 10, 42)))
+
+# eGFR
+quick_ggsave("ph_fg_egfr.png", ph_plot("egfr", "eGFR", c("E", 10, 3)))
+
+# BMI
+quick_ggsave("ph_fg_bmi.png", ph_plot("bmi", "BMI", c("F", 10, 2)))
+
+```
+
+### 2.2.2. Cox model
+```{r}
+# Fit full model
+fit <- coxph(Surv(tte, event == "hospitalization") ~ age + as.factor(cardiovasc) + as.factor(dm) + as.factor(mal) + as.factor(lung) + egfr + bmi, 
+             data = filter(dat_dev, .imp == 1))
+
+# Age
+quick_ggsave("ph_cox_age.png", ph_plot("age", "age", c("A", 10, 0.2)))
+
+# Cardiovascular disease
+quick_ggsave("ph_cox_cvd.png", ph_plot("cardiovasc", "cardiovascular disease", c("B", 10, 5.5)))
+
+# Diabetes
+quick_ggsave("ph_cox_dm.png", ph_plot("dm", "diabetes mellitus", c("C", 10, 9)))
+
+# Malignancy
+quick_ggsave("ph_cox_mal.png", ph_plot("mal", "malignancy", c("D", 10, 42)))
+
+# eGFR
+quick_ggsave("ph_cox_egfr.png", ph_plot("egfr", "eGFR", c("E", 10, 3)))
+
+# BMI
+quick_ggsave("ph_cox_bmi.png", ph_plot("bmi", "BMI", c("F", 10, 2)))
+
+```
+
+# 3. Fine-Gray model development
+## 3.2. Development
+```{r}
+# Develop model
+model_vars <- dev(dat_dev, "Surv(tte, event) ~ age + as.factor(cardiovasc) + as.factor(dm) + as.factor(mal) + egfr + bmi", "fine-gray")
+
+```
+
+## 3.3. Validation
+### 3.3.1. Internal validation
+```{r}
+# Validate model
+pred(dat_dev, "fine-gray", event, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "fine-gray", time, histogram_label = 0.2, deciles = TRUE, annotation = c("A", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/fg_cal_hd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+### 3.3.2. Performance in NECOSAD PD
+```{r}
+# Validate model
+pred(dat_necosad_pd, "fine-gray", event, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "fine-gray", time, histogram_label = 0.2, deciles = TRUE, annotation = c("B", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/fg_cal_pd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+### 3.3.3. Performance in EQUAL
+```{r}
+# Validate model
+pred(dat_equal, "fine-gray", event, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "fine-gray", time, histogram_label = 0.2, deciles = TRUE, annotation = c("C", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/fg_cal_pre_dial.png", width = 7, height = 7, dpi = 600)
+
+```
+
+# 4. Cox model development
+## 4.1. Development
+```{r}
+# Develop model
+model_vars <- dev(dat_dev, "Surv(tte, event == 'hospitalization') ~ age + as.factor(cardiovasc) + as.factor(dm) + as.factor(mal) + egfr + bmi", "cox")
+
+```
+
+## 4.2. Validation
+### 4.2.1. Internal validation
+```{r}
+# Validate model
+dat_dev %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("cox", event_nocr, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "cox", time, histogram_label = 0.2, deciles = TRUE, annotation = c("A", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/cox_cal_hd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+### 4.2.2. Performance in NECOSAD PD
+```{r}
+# Validate model
+dat_necosad_pd %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("cox", event_nocr, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "cox", time, histogram_label = 0.2, deciles = TRUE, annotation = c("B", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/cox_cal_pd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+### 4.2.3. Performance in EQUAL
+```{r}
+# Validate model
+dat_equal %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("cox", event_nocr, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "cox", time, histogram_label = 0.2, deciles = TRUE, annotation = c("C", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/cox_cal_pre_dial.png", width = 7, height = 7, dpi = 600)
+
+```
+
+# 5. Logistic model development
+## 5.1. Development
+```{r}
+# Develop model
+model_vars <- dev(dat_dev, "event == 'hospitalization' ~ age + as.factor(cardiovasc) + as.factor(dm) + as.factor(mal) + egfr + bmi", "logistic")
+
+```
+
+## 5.2. Validation
+### 5.2.1. Internal validation
+```{r}
+# Validate model
+dat_dev %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("logistic", event_nocr) %>%
+    # Validate
+    validate(observed, pred, lp, "logistic", histogram_label = 0.2, deciles = TRUE, annotation = c("A", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/log_cal_hd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+### 5.2.2. Performance in NECOSAD PD
+```{r}
+# Validate model
+dat_necosad_pd %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("logistic", event_nocr) %>%
+    # Validate
+    validate(observed, pred, lp, "logistic", histogram_label = 0.2, deciles = TRUE, annotation = c("B", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/log_cal_pd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+### 5.2.3. Performance in EQUAL
+```{r}
+# Validate model
+dat_equal %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("logistic", event_nocr) %>%
+    # Validate
+    validate(observed, pred, lp, "logistic", histogram_label = 0.2, deciles = TRUE, annotation = c("C", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/log_cal_pre_dial.png", width = 7, height = 7, dpi = 600)
+
+
+```
+
+# 6. Sensitivity analyses
+## 6.1. Re-estimation
+### 6.1.1. Function for re-estimating
+```{r}
+# Load function
+source("https://raw.githubusercontent.com/rjjanse.LUMCNET/hosps/main/reestimate.R")
+
+```
+
+### 6.1.2. Re-estimation
+#### 6.1.2.1. NECOSAD PD
+```{r eval=FALSE, include=FALSE}
+# Re-estimate
+reestimate(dat_necosad_pd, save_location = "C:/users/rjjanse.LUMCNET/onedrive - lumc/research/projects/10. ev_hosp/figures/reestimates",
+           save_name_prefix = "pd_", event_label = 0.2, annotation = "A")
+
+```
+
+#### 6.1.2.2. EQUAL pre-dialysis
+```{r eval=FALSE, include=FALSE}
+# Re-estimate
+reestimate(dat_equal, save_location = "C:/users/rjjanse.LUMCNET/onedrive - lumc/research/projects/10. ev_hosp/figures/reestimates",
+           save_name_prefix = "pre-dialysis_", event_label = 0.8, annotation = "B")
+
+```
+
+## 6.2. Only hospitalizations at least 3 days long
+```{r}
+# Prepare development data for sensitivity analysis
+dat_dev <- dat_necosad_hd_hosp %>%
+    # Keep only first visit
+    filter(visit == 1) %>%
+    # Keep only individuals with known outcome
+    filter(missing_hosp == 0) %>% # Drops 0 people
+    # Keep only relevant variables
+    dplyr::select(.imp, studynr, age, dm, hf, cad, mal, pvd, ap, cvd, mi, baseline_lvh, lung, egfr, bmi, event_sens, tte_sens) %>%
+    # Create cardiovascular disease and rename sensitivity analysis variables
+    rename(cardiovasc = cvd, event = event_sens, tte = tte_sens) %>%
+    # Change event to factor
+    mutate(event = factor(event, labels = c("censoring", "hospitalization", "death")))
+
+# Number of individuals in development data
+print(paste0("Number of events in sensitivity development data: ", table(filter(dat_dev, .imp == 1)[["event"]])[["hospitalization"]]))
+
+# Prepare NECOSAD PD validation data
+dat_necosad_pd <- select(dat_necosad_pd_hosp, .imp, studynr, visit, cad, dm, hf, mal, cvd, lung, tte_sens, event_sens, 
+                          missing_hosp, age, female, egfr, bmi) %>%
+    # Create cardiovascular disease and rename sensitivity analysis variables
+    rename(cardiovasc = cvd, event = event_sens, tte = tte_sens) %>%
+    # Keep only first visit
+    filter(visit == 1) %>%
+    # Only known outcome
+    filter(missing_hosp == 0) %>%
+    # Change event to factor
+    mutate(event = factor(event, labels = c("censoring", "hospitalization", "death")))
+
+# Number of individuals in NECOSAD PD data
+print(paste0("Number of events in sensitivity NECOSAD PD data: ", table(filter(dat_necosad_pd, .imp == 1)[["event"]])[["hospitalization"]]))
+
+# Prepare EQUAL validation data
+dat_equal <- select(dat_equal_hosp, .imp, studynr, visit, cad, dm, hf, mal, hypert, cvd, pvd, mi, ap, 
+                    lvh, af, lung, tte_sens, event_sens, missing_hosp, age, female, egfr, bmi) %>%
+    # Create new variables
+    mutate(cardiovasc = pmax(cad, hf, cvd, pvd, mi, ap, lvh, af, na.rm = TRUE)) %>%
+    # Rename sensitivity analysis variables
+    rename(event = event_sens, tte = tte_sens) %>%
+    # Keep only first visit
+    filter(visit == 0) %>%
+    # Only known outcome
+    filter(missing_hosp == 0) %>%
+    # Change event to factor
+    mutate(event = factor(event, labels = c("censoring", "hospitalization", "death")))
+
+# Number of individuals in EQUAL data
+print(paste0("Number of events in sensitivity EQUAL data: ", table(filter(dat_equal, .imp == 1)[["event"]])[["hospitalization"]]))
+
+```
+
+### 6.2.1. Fine-Gray model development
+#### 6.2.1.1. Development
+```{r}
+# Develop model
+model_vars <- dev(dat_dev, "Surv(tte, event) ~ age + as.factor(cardiovasc) + as.factor(dm) + as.factor(mal) + egfr + bmi", "fine-gray")
+
+```
+
+#### 6.2.1.2. Validation
+##### 6.2.1.2.1. Internal validation
+```{r}
+# Validate model
+pred(dat_dev, "fine-gray", event, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "fine-gray", time, histogram_label = 0.8, deciles = TRUE, annotation = c("A", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/sens_fg_cal_hd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+##### 6.2.1.2.2. Performance in NECOSAD PD
+```{r}
+# Validate model
+pred(dat_necosad_pd, "fine-gray", event, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "fine-gray", time, histogram_label = 0.8, deciles = TRUE, annotation = c("B", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/sens_fg_cal_pd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+##### 6.2.1.2.3. Performance in EQUAL
+```{r}
+# Validate model
+pred(dat_equal, "fine-gray", event, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "fine-gray", time, histogram_label = 0.8, deciles = TRUE, annotation = c("C", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/sens_fg_cal_pre_dial.png", width = 7, height = 7, dpi = 600)
+
+```
+
+### 6.2.2. Cox model development
+#### 6.2.2.1. Development
+```{r}
+# Develop model
+model_vars <- dev(dat_dev, "Surv(tte, event == 'hospitalization') ~ age + as.factor(cardiovasc) + as.factor(dm) + as.factor(mal) + egfr + bmi", "cox")
+
+```
+
+#### 6.2.2.2. Validation
+##### 6.2.2.2.1. Internal validation
+```{r}
+# Validate model
+dat_dev %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("cox", event_nocr, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "cox", time, histogram_label = 0.8, deciles = TRUE, annotation = c("A", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/sens_cox_cal_hd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+##### 6.2.2.2.2. Performance in NECOSAD PD
+```{r}
+# Validate model
+dat_necosad_pd %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("cox", event_nocr, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "cox", time, histogram_label = 0.8, deciles = TRUE, annotation = c("B", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/sens_cox_cal_pd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+##### 6.2.2.2.3. Performance in EQUAL
+```{r}
+# Validate model
+dat_equal %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("cox", event_nocr, tte, lpsamp = lpsamp(dat_dev)) %>%
+    # Validate
+    validate(observed, pred, lp, "cox", time, histogram_label = 0.8, deciles = TRUE, annotation = c("C", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/sens_cox_cal_pre_dial.png", width = 7, height = 7, dpi = 600)
+
+```
+
+### 6.2.3. Logistic model development
+#### 6.2.3.1. Development
+```{r}
+# Develop model
+model_vars <- dev(dat_dev, "event == 'hospitalization' ~ age + as.factor(cardiovasc) + as.factor(dm) + as.factor(mal) + egfr + bmi", "logistic")
+
+```
+
+#### 6.2.3.2. Validation
+##### 6.2.3.2.1. Internal validation
+```{r}
+# Validate model
+dat_dev %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("logistic", event_nocr) %>%
+    # Validate
+    validate(observed, pred, lp, "logistic", histogram_label = 0.8, deciles = TRUE, annotation = c("A", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/sens_log_cal_hd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+##### 6.2.3.2.2. Performance in NECOSAD PD
+```{r}
+# Validate model
+dat_necosad_pd %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("logistic", event_nocr) %>%
+    # Validate
+    validate(observed, pred, lp, "logistic", histogram_label = 0.8, deciles = TRUE, annotation = c("B", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/sens_log_cal_pd.png", width = 7, height = 7, dpi = 600)
+
+```
+
+##### 6.2.3.2.3. Performance in EQUAL
+```{r}
+# Validate model
+dat_equal %>%
+    # Change event to no competing risks
+    mutate(event_nocr = ifelse(event == "hospitalization", 1, 0)) %>%
+    # Get predictions
+    pred("logistic", event_nocr) %>%
+    # Validate
+    validate(observed, pred, lp, "logistic", histogram_label = 0.8, deciles = TRUE, annotation = c("C", 0, 0.98))
+
+# Save plot
+ggsave("C:/Users/rjjanse.LUMCNET/OneDrive - LUMC/Research/Projects/10. EV_Hosp/figures/sens_log_cal_pre_dial.png", width = 7, height = 7, dpi = 600)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

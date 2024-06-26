@@ -1,0 +1,229 @@
+---
+title: Prediction models for hospitalization external validation study
+subtitle: Processing review data
+author: "Roemer J. Janse"
+date: "2023/03/06"
+output:
+  word_document:
+    toc: yes
+    toc_depth: 2
+---
+
+# 0. Set-up
+```{r, include=FALSE}
+# Set knitting options
+knitr::opts_chunk$set(echo = FALSE, evaluate = TRUE, tidy = TRUE, cache = FALSE, autodep = TRUE, warning = FALSE, message = FALSE)
+
+# Load packages
+pacman::p_load("dplyr",          # Data manipulation
+               "tidyr",          # replace_na function & pivot_longer function
+               "readxl",         # Reading data from .xlsx
+               "writexl",        # Writing data to .xlsx
+               "knitr",          # Knitting script
+               "tableone",       # Create Table One
+               "magrittr"        # Efficient piping
+)
+
+```
+
+# 1. Data preparation
+```{r} 
+# Load data
+dat_rev <- read_excel("C:/Users/rjjanse/Onedrive - LUMC/Research/Projects/10. EV_Hosp/data/review_data.xlsx", sheet = "data-extraction", range = "A4:HU21")
+
+# Prepare data
+dat_rev <- dat_rev %>%
+    # Create indicator for citations (year + name)
+    mutate(# Get only last name of first author
+           last_name = gsub("\\S* ", "", author),
+           # Add year and last name together
+           citation = paste(year_publication, last_name),
+           # If model developed does not have a name, set to '-'
+           mod_nr = ifelse(!is.na(suppressWarnings(as.numeric(mod_nr))), "-", mod_nr),
+           # Change mod_nr to factor to make sure stacking models are reported in tables after individual components
+           mod_nr = factor(mod_nr, levels = c("-", "1 hospitalization", "6 hospitalizations", "Admission", "Discharge", "CART", "CCI", "Davies", "GBDT", "KNN", "LR", "RF", "SVM",
+                                              "Stacking"))) %>%
+    # Change CITL and slope from logical to character
+    mutate(citl = as.character(citl), slope = as.character(slope)) %>%
+    # Sort data on citation and then model name
+    arrange(citation, mod_nr)
+
+```
+
+# 2. Table 1. General characteristics
+```{r} 
+# Create table 1
+dat_rev %>%
+    # Keep only relevant variables
+    dplyr::select(citation, mod_nr, country:cstat) %>%
+    # Change missing values to empty
+    replace_na(list(citl = "", slope = "", cstat = "")) %>%
+    # Change names of columns
+    set_colnames(c("Paper", "Model", "Country", "Time period of inclusion", "Design", "Population", "Sample size", "Number of events", "Outcome", "Follow-up time", 
+                   "Prediction horizon", "Information goal", "Modelling method", "Number of candidate predictors", "Predictor selection method", "Penalization method",
+                   "Validation method", "Calibration-in-the-large", "Calibration slope", "C-statistic")) %>%
+    # Kable table
+    kable()
+
+```
+
+# 3. Table 2. Baseline characteristics of EQUAL and NECOSAD
+```{r}
+# Load data for table 2
+load("C:/Users/rjjanse/OneDrive - LUMC/Research/Projects/10. EV_Hosp/codes/dataframes/dat_overall.Rdata")
+
+# Create list of variables
+var <- c("age", "female", "egfr", "tod", "dm", "ht", "cad", "hf")
+
+# Create list of categorical variables
+cat <- c("female", "dm", "ht", "cad", "hf")
+
+# Create table one
+dat_overall %>%
+    # Create table one
+    CreateTableOne(vars = var, factorVars = cat, strata = "src") %>%
+    # Print table one
+    print(printToggle = FALSE, noSpaces = TRUE, catDigits = 1, contDigits = 1, nonnormal = c("age", "egfr")) %>%
+    # Change to matrix
+    as.matrix() %>%
+    # Keep only relevant columns
+    .[, 1:3] %>%
+    # Change labels
+    set_rownames(c("Number of individuals", "Age, y, median (IQR)", "Women, n (%)", "eGFR, mL/min/1.73m2, median (IQR)", "Time on dialysis, mo, mean (SD)", 
+                   "Diabetes mellitus, n (%)", "Hypertension, n (%)", "Coronary artery disease, n (%)", "Heart failure, n (%)")) %>%
+    # Change column names
+    set_colnames(c("EQUAL", "NECOSAD HD", "NECOSAD PD")) %>%
+    # Kable table
+    kable()
+
+```
+
+# 4. Table 3. Risk of bias according to PROBAST (concise)
+```{r}
+# Create base of table 2
+tab_2 <- dat_rev %>%
+    # Keep only relevant variables
+    dplyr::select(citation, mod_nr, d1, d2, d3, d4, d1_app, d2_app, d3_app, d4_app, overall_rob, overall_appl)
+
+# Finalize table
+cbind(# Citation and model number
+      dplyr::select(tab_2, citation, mod_nr),
+      # Changed input to low (low risk) and high (high risk)
+      do.call("cbind", lapply(colnames(tab_2)[3:length(colnames(tab_2))], \(x){
+          # Function for changing input
+          dat_rev %>%
+              # Keep only column of iteration
+              dplyr::select(all_of(x)) %>%
+              # Change variable name
+              rename(input = 1) %>%
+              # Change input
+              mutate(input = case_when(input == "Low risk of bias" ~ "Low",
+                                       input == "Low concern" ~ "Low",
+                                       input == "High risk of bias" ~ "High",
+                                       input == "High concern" ~ "High",
+                                       input == "Not reported" ~ "?"))}))) %>%
+    # Change names of table 
+    set_colnames(c("Paper", "Model", "Participants", "Predictors", "Outcome", "Analysis", "Participants", "Predictors", "Outcome", "Analysis", "ROB", "Applicability")) %>%
+    # Kable table
+    kable()
+
+```
+
+# 5. Supplementary table 1. Population characteristics of each model and the external validation datasets
+```{r}
+# Create supplementary table 1
+dat_rev %>%
+    # Keep only relevant variables
+    dplyr::select(citation, mod_nr, age, women, egfr, dial_dur, prev_hosp, dm, hyp, cad, hf) %>%
+    # Set missing variables to empty
+    replace_na(list(age = "", women = "", egfr = "", dial_dur = "", prev_hosp = "", dm = "", hyp = "", cad = "", hf = "")) %>%
+    # Change 1.0 HF to 100% HF
+    mutate(hf = ifelse(hf == "1.0", "100%", hf)) %>%
+    # Change column names
+    set_colnames(c("Paper", "Model", "Age", "Women", "eGFR", "Dialysis duration", "Previous hospitalizations", "Diabetes mellitus", "Hypertension", 
+                   "Coronary artery disease", "Heart failure")) %>%
+    # Write to .xlsx (kable() does not work due to cell content)
+    write_xlsx(., path = "C:/Users/rjjanse/OneDrive - LUMC/Research/Projects/10. EV_Hosp/codes/results/st1.xlsx")
+
+```
+
+# 6. Supplementary table 2. Detailed characteristics of each included model
+```{r}
+# Create supplementary table 2
+dat_rev %>%
+    # Keep only relevant variables
+    dplyr::select(citation, mod_nr, pop_crit:limitations) %>%
+    # Replace missings
+    replace_na(list(`brier score` = "", eci = "", sensitivity = "", Specificity = "", gm = "", `hl-test` = "")) %>%
+    # Change column names
+    set_colnames(c("Paper", "Model", "Eligibility criteria", "Recruitment method", "Definition", "Measurement", "Consistent", "Type", "Blinded assessment", "Incorporation bias",
+                   "EPV", "% Missing", "Missing data handling", "Assumptions satisfied", "Candidate predictor selection", "AIC", "Brier score", "ECI", "Sensitivity", 
+                   "Specificity", "GM", "Hosmer-Lemeshow test", "Alternative presentation", "Compared development and validation dataset", "Interpretation", 
+                   "Comparison with other studies", "Generalizability", "Strengths", "Limitations")) %>%
+    # Write to .xlsx (kable() does not work due to cell content)
+    write_xlsx(., path = "C:/Users/rjjanse/OneDrive - LUMC/Research/Projects/10. EV_Hosp/codes/results/st2.xlsx")
+
+```
+
+# 7. Supplementary table 3. Characteristics of candidate predictors
+```{r}
+# Create supplementary table 3
+dat_rev %>%
+    # Keep only relevant variables
+    dplyr::select(citation, mod_nr, pred_1:hand_23) %>%
+    # Complete pivot longer
+    pivot_longer(pred_1:hand_23, names_to = c("var", "nr"), names_pattern = "(\\w+)_(\\d+)", values_to = "val") %>%
+    # Pivot wider on var names
+    pivot_wider(id_cols = c(citation, mod_nr, nr), names_from = var, values_from = val, names_repair = "check_unique") %>%
+    # Remove NAs
+    filter(!is.na(pred)) %>%
+    # Remove number column
+    dplyr::select(-nr) %>%
+    # Change column names
+    set_colnames(c("Paper", "Model", "Predictor", "Type", "Definition", "Measurement", "Blinded assessment", "Handling in model")) %>%
+    # Kable table
+    kable()
+
+```
+
+# 8. Supplementary table 5. Risk of bias according to PROBAST (complete)
+```{r}
+# Create supplementary table 5
+tab_s5 <- dat_rev %>%
+    # Keep only relevant variables
+    dplyr::select(citation, mod_nr, s11:overall_appl)
+    
+# Finalize table
+cbind(# Citation and model number
+      dplyr::select(tab_s5, citation, mod_nr),
+      # Changed input to low, high, ?, Y, N, PY, and PN
+      do.call("cbind", lapply(colnames(tab_s5)[3:length(colnames(tab_s5))], \(x){
+          # Function for changing input
+          dat_rev %>%
+              # Keep only column of iteration
+              dplyr::select(all_of(x)) %>%
+              # Change variable name
+              rename(input = 1) %>%
+              # Change input
+              mutate(input = case_when(input == "Low risk of bias" ~ "Low",
+                                       input == "Low concern" ~ "Low",
+                                       input == "High risk of bias" ~ "High",
+                                       input == "High concern" ~ "High",
+                                       input == "Not reported" ~ "?",
+                                       input == "Yes" ~ "Y",
+                                       input == "No" ~ "N",
+                                       input == "Probably yes" ~ "PY",
+                                       input == "Probably no" ~ "PN"),
+                     input = ifelse(is.na(input), "NR", input))
+      }))) %>%
+    # Change column names
+    set_colnames(c("Paper", "Model", "Appropriate data", "Appropriate eligibility", "Overall", "Applicability", "Consistent definition and assessment", "Blinded assessment", 
+                   "Available at intended model use", "Overall", "Applicability", "Appropriate definition", "Prespecified/standard definition", "No predictors in definition", 
+                   "Consistent definition and assessment", "Blinded assessment", "Appropriate time interval", "Overall", "Applicability", "Reasonable number of events", 
+                   "Appropriate handling of predictors", "All enrolled participants used", "Appropriate missing data handling", "No predictor selection based on univariable analysis", 
+                   "Appropriate handling of data complexities", "Appropriate relevant model performance assessment", "Accounting for overfitting and optimism", 
+                   "Assigned predictor weights correspond to final multivariable analysis", "Overall", "Applicability", "Risk of bias", "Applicability")) %>%
+    # Kable table
+    kable()
+
+```
