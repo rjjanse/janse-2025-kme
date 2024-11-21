@@ -485,7 +485,7 @@ validate <- function(.data,                                     # Data
     else prop_out <- mean(obs)
     
     # Calibration-in-the-large
-    citl <- format(round(prop_out / mean(prd), 3), nsmall = 3)
+    citl <- format(round(prop_out - mean(prd), 3), nsmall = 3)
     
     ## Calculate calibration slope
     # Generalized linear model
