@@ -485,7 +485,7 @@ validate <- function(.data,                                     # Data
     if(model %in% c("linear", "poisson")) prop_out <- mean(obs)
     
     # Calibration-in-the-large
-    citl <- format(round(prop_out - mean(prd), 3), nsmall = 3)
+    if(model %in% c("linear", "poisson", "logistic")) citl <- format(round(prop_out - mean(prd), 3), nsmall = 3)
     
     # Calibation-in-the-large with cumulative incidence function for survival models
     if(model %in% c("cox", "fine-gray")){
