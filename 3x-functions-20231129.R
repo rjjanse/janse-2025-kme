@@ -501,7 +501,7 @@ validate <- function(.data,                                     # Data
                  # Keep baseline hazard
                  extract2("estimate")) %>%
             # Divide by mean predicted risk
-            substract(mean(dat[["prd"]])) %>%
+            subtract(mean(dat[["prd"]])) %>%
             # Round
             round(digits = 3) %>%
             # Format
