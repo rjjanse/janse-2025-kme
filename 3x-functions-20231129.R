@@ -479,14 +479,35 @@ validate <- function(.data,                                     # Data
     
     ## Calculate performance measures
     # Get proportion of outcome for non-continuous models
-    if(!(model %in% c("linear", "poisson", "aft"))) prop_out <- prop.table(table(dat[["obs"]]))[["1"]]
+    if(!(model %in% c("linear", "poisson", "aft", "cox", "fine-gray"))) prop_out <- prop.table(table(dat[["obs"]]))[["1"]]
     
     # Get mean of outcome for continous models
-    else prop_out <- mean(obs)
+    if(model %in% c("linear", "poisson")) prop_out <- mean(obs)
     
     # Calibration-in-the-large
     citl <- format(round(prop_out - mean(prd), 3), nsmall = 3)
     
+    # Calibation-in-the-large with cumulative incidence function for survival models
+    if(model %in% c("cox", "fine-gray")){
+        citl <- 
+            (# Fit cumulative incidence function
+             survfit(Surv(tim, obs, type = "mstate") ~ 1, data = dat) %>%
+                 # Change fit list to dataframe
+                 tidy() %>%
+                 # Keep only events
+                 filter(state == 1) %>%
+                 # Keep only last observation, assuming this is the time point of interest
+                 slice_tail(n = 1L) %>%
+                 # Keep baseline hazard
+                 extract2("estimate")) %>%
+            # Divide by mean predicted risk
+            substract(mean(dat[["prd"]])) %>%
+            # Round
+            round(digits = 3) %>%
+            # Format
+            format(nsmall = 3)
+    }
+
     ## Calculate calibration slope
     # Generalized linear model
     if(!(model %in% c("cox", "fine-gray", "aft"))) cslope <- format(round(glm(y ~ lps, family = ifelse(model == "logistic", "binomial", model), 
