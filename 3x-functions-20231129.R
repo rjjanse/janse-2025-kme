@@ -25,6 +25,9 @@ lin_check <- function(var, annotation, model){
     if(is.factor(dat_dev[["event"]])) ev <- as.numeric(filter(dat_dev, .imp == 1)[["event"]]) - 1 
     else ev <- as.numeric(filter(dat_dev, .imp == 1)[["event"]])
     
+    # # Get mean value
+    # mean_val <- if_else(model == "logistic", 0, mean(filter(dat_dev, .imp == 1)[[var]]))
+    
     # Fine-Gray model
     if(model == "fine-gray"){
         # Get data
@@ -52,6 +55,22 @@ lin_check <- function(var, annotation, model){
             as.data.frame() 
     }
     
+    # # Value at mean
+    # val_at_mean <- filter(dat_plot, x <= mean_val) %>%
+    #     # Keep last row
+    #     slice_tail(n = 1L) %>%
+    #     # Subset only estimate
+    #     extract2("V3")
+    # 
+    # # Set SE's at mean to 0
+    # # Reviewer request: the hazard is relative to the centered (mean) value so there the confidence intervals should be 0
+    # dat_plot <- rbind(dat_plot,
+    #                   data.frame(knots = 0,
+    #                              x = mean_val,
+    #                              V3 = val_at_mean,
+    #                              V4 = val_at_mean,
+    #                              V5 = val_at_mean))
+    
     # Get x-axis label
     xlabel <- ifelse(var == "age", "Age (years)", ifelse(var == "bmi", expression("BMI (kg/m" ^ 2 * ")"), 
                                                          expression("eGFR (mL/min/1.73m" ^ 2 * ")")))
@@ -66,7 +85,7 @@ lin_check <- function(var, annotation, model){
                            name = ifelse(model == "logistic", "Log odds", "Log relative hazard")) +
         # Labelling
         xlab(xlabel) +
-        annotate("text", x = as.numeric(annotation[2]), y = as.numeric(annotation[3]), label = annotation[1], fontface = "bold", size = 8) +
+        #annotate("text", x = as.numeric(annotation[2]), y = as.numeric(annotation[3]), label = annotation[1], fontface = "bold", size = 8) +
         # Aesthetics
         theme_bw() +
         theme(panel.grid = element_blank())
@@ -473,7 +492,7 @@ validate <- function(.data,                                     # Data
                 panel_border(colour = "black", size = 1)
             
             # Combine plots
-            plot_cal <- suppressWarnings(plot_grid(plot_cal, plot_his, align = c("hv"), axis = c("tblr"), ncol = 1, rel_heights = c(3, 1)))
+            plot_cal <- wrap_plots(plot_cal, plot_his, ncol = 1, heights = c(3, 1))
         }
     }
     
