@@ -17,3 +17,11 @@ DOI: [https://doi.org/10.1016/j.xkme.2025.101016](https://doi.org/10.1016/j.xkme
 **Conclusions:** Hospitalizations are important but difficult to predict for patients with advanced CKD. An improved prediction model should be developed, for example, using a more specific outcome (eg, cardiovascular hospitalizations) and more predictors (eg, patient-reported outcome measures).
 
 **Plain-Language Summary:** Hospitalizations often occur in patients with advanced chronic kidney disease. By predicting hospitalization and related outcomes, patients can better prepare for the future and cope with their disease. Therefore, we searched existing literature for existing methods to predict hospitalizations and related outcomes. Although many algorithms exist, they are often not available for use or are not reliable. We then developed our own algorithm to predict hospitalization in the coming year. However, it also did not predict reliably. In this study, we summarize what failed in existing prediction algorithms, what we learned from predicting hospitalization ourselves, and how to proceed to allow reliable predictions of hospitalizations.
+
+
+## Codes
+- 1-review_data-20230306.Rmd: Extract and make tables of data collected through the systematic review
+- 2-external_validation-20230322.R: Externally validate identified models where possible
+- 3-development-20230615.qmd: Development and validation of new model
+- 3x-functions-20231129.R: Functions to support script 3
+- reestimate.R: Example script for the re-estimation of the model developped in script 3
